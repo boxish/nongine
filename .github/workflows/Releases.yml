@@ -1,0 +1,82 @@
+name: Releases
+on:
+  push:
+    tags:
+    - '*'
+jobs:
+  build:
+    runs-on: windows-2019
+    env:
+      Solution_Name: OsEngine.sln
+      Configuration: Release #Release Debug
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+
+    - name: Setup MSBuild.exe
+      uses: microsoft/setup-msbuild@v1.0.2
+
+    - name: Setup SmartCOM
+      working-directory: ./doc
+      shell: pwsh
+      run: Start-Process "msiexec.exe" -ArgumentList  $env:arguments -Wait -NoNewWindow
+      env:
+        arguments: "/i SmartCOM-x64-4.0.14355.msi /quiet"
+
+    - name: Cleaning previous build outputs
+      working-directory: ./project/OsEngine
+      run: Get-ChildItem .\ -include bin,obj -Recurse | foreach ($_) { remove-item $_.fullname -Force -Recurse }
+
+    # Restore the application to populate the obj folder with RuntimeIdentifiers
+    - name: Restore the application
+      working-directory: ./project
+      run: msbuild $env:Solution_Name /t:Restore /p:RestorePackagesConfig=true,Configuration=$env:Configuration
+
+    - name: Build app for release
+      working-directory: ./project
+      run: msbuild $env:Solution_Name -t:rebuild -verbosity:minimal -property:Configuration=$env:Configuration
+        
+    - name: Generate changelog
+      id: changelog
+      uses: jaywcjlove/changelog-generator@main
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        filter-author: (jaywcjlove|dependabot|renovate\\[bot\\]|dependabot\\[bot\\]|Renovate Bot)
+        filter: '[R|r]elease[d]\s+[v|V]\d(\.\d+){0,2}'
+
+    - name: Archive created file
+      run: 7z a OsEngine.zip ./project/OsEngine/bin/Release/
+        
+    - name: Create Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        body: ${{ steps.changelog.outputs.changelog }}
+        tag_name: ${{ github.ref }}
+        release_name: Release ${{ github.ref }}
+        draft: false
+        prerelease: true
+        
+    - name: Upload Release Asset
+      id: upload-release-asset 
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./OsEngine.zip
+        asset_name: OsEngine.zip
+        asset_content_type: application/zip
+      
+    #Upload build artifact: https://github.com/marketplace/actions/upload-a-build-artifact
+    - uses: actions/upload-artifact@v3
+      with:
+        name: OsEngine
+        path: ${{ github.workspace }}/project/OsEngine/bin/Release
+        
+        
